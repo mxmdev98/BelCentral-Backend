@@ -1,15 +1,31 @@
 // src/db/migrate.ts — runs every .sql file in /migrations in filename order.
 // Idempotent: relies on each migration being IF NOT EXISTS / ON CONFLICT.
-// For a more robust migration tracker, add a `schema_migrations` table later.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool } from "./pool.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.resolve(__dirname, "../../migrations");
+
+// Try several candidate locations so this works in dev (tsx) AND in the
+// Docker container (compiled JS + migrations copied to /app/migrations).
+function findMigrationsDir(): string {
+  const candidates = [
+    path.resolve(__dirname, "../../migrations"),   // dev: src/db/ -> ../../migrations
+    path.resolve(__dirname, "../../../migrations"), // compiled: dist/db/ -> ../../../migrations (when migrations is at project root)
+    path.resolve(process.cwd(), "migrations"),     // Docker: /app/migrations
+    "/app/migrations",                              // Docker absolute fallback
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  throw new Error(`Could not find migrations directory. Tried: ${candidates.join(", ")}`);
+}
 
 async function main() {
+  const MIGRATIONS_DIR = findMigrationsDir();
+  console.log(`Looking for migrations in: ${MIGRATIONS_DIR}`);
+
   const files = fs
     .readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))

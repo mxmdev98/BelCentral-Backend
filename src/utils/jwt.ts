@@ -33,7 +33,10 @@ export function verifyToken(token: string): AuthUser {
 export function setAuthCookie(res: Response, token: string): void {
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: "lax",
+    // When SECURE=true (production, HTTPS), use sameSite=none so the cookie
+    // works across subdomains (recordbook.example.pg <-> api.recordbook.example.pg).
+    // In dev (SECURE=false), use lax so localhost works without HTTPS.
+    sameSite: SECURE ? "none" : "lax",
     secure: SECURE,
     maxAge: 12 * 60 * 60 * 1000, // 12h — keep in sync with JWT_EXPIRES_IN
     path: "/",
