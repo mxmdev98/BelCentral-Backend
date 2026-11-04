@@ -35,7 +35,9 @@ app.use(
 );
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
-app.use(pinoHttp({ logger }));
+const httpLogger = (pinoHttp as unknown as (opts: { logger: typeof logger }) => express.RequestHandler)({ logger });
+app.use(httpLogger);
+//app.use(pinoHttp({ logger }));
 
 // Health check — no auth, useful for Nginx/uptime monitors.
 app.get("/api/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
