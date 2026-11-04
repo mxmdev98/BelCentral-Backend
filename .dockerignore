@@ -4,3 +4,6 @@ dist
 *.log
 .DS_Store
 .git
+# Explicitly ignore lockfile so Docker never sees a stale one.
+# The Dockerfile always runs `npm install` fresh.
+package-lock.json

@@ -3,9 +3,11 @@
 FROM node:20-slim AS builder
 WORKDIR /app
 
-# Install deps (cached layer)
-COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+# Copy package.json. We deliberately do NOT copy package-lock.json —
+# we always run a fresh `npm install` so the build never fails due to
+# a stale or missing lockfile. (Slightly slower, but bulletproof.)
+COPY package.json ./
+RUN npm install --no-audit --no-fund
 
 # Build TypeScript
 COPY tsconfig.json ./
@@ -16,9 +18,9 @@ RUN npm run build
 FROM node:20-slim AS runner
 WORKDIR /app
 
-# Only production deps
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev || npm install --omit=dev
+# Only production deps — same fresh install approach
+COPY package.json ./
+RUN npm install --omit=dev --no-audit --no-fund
 
 # Compiled output + migrations
 COPY --from=builder /app/dist ./dist
