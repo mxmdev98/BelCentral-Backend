@@ -9,7 +9,9 @@ export function validate(schema: ZodSchema, source: "body" | "query" | "params" 
       return next(result.error);
     }
     // Replace with the parsed (and coerced/trimmed) value.
-    (req as Record<string, unknown>)[source] = result.data;
+    // Cast through `unknown` first because Express's Request type doesn't
+    // sufficiently overlap with Record<string, unknown> for a direct cast.
+    (req as unknown as Record<string, unknown>)[source] = result.data;
     next();
   };
 }
