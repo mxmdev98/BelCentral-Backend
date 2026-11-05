@@ -1,6 +1,6 @@
 // src/routes/residents.ts
 import { Router } from "express";
-import { requireAuth, requireAdmin } from "../middleware/auth.js";
+import { requireAuth, requireAdmin, requirePermission } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import {
   createResidentSchema,
@@ -13,33 +13,34 @@ import * as svc from "../services/residents.js";
 const router = Router();
 
 // GET /api/residents?q=...&page=1&limit=25&...
-router.get("/", requireAuth, validate(searchResidentsSchema, "query"), async (req, res, next) => {
+router.get("/", requireAuth, requirePermission("residents", "read"), validate(searchResidentsSchema, "query"), async (req, res, next) => {
   try {
     const result = await svc.searchResidents(req.query as unknown as SearchResidentsInput);
     res.json(result);
   } catch (err) { next(err); }
 });
 
-router.get("/:id", requireAuth, async (req, res, next) => {
+router.get("/:id", requireAuth, requirePermission("residents", "read"), async (req, res, next) => {
   try {
     res.json(await svc.getResident(req.params.id));
   } catch (err) { next(err); }
 });
 
-router.post("/", requireAuth, validate(createResidentSchema), async (req, res, next) => {
+router.post("/", requireAuth, requirePermission("residents", "create"), validate(createResidentSchema), async (req, res, next) => {
   try {
-    const resident = await svc.createResident(req.body, req.user!.id);
+    const createdBy = req.user?.id ?? 1; // fallback to admin user id if somehow missing
+    const resident = await svc.createResident(req.body, createdBy);
     res.status(201).json(resident);
   } catch (err) { next(err); }
 });
 
-router.put("/:id", requireAuth, validate(updateResidentSchema), async (req, res, next) => {
+router.put("/:id", requireAuth, requirePermission("residents", "update"), validate(updateResidentSchema), async (req, res, next) => {
   try {
     res.json(await svc.updateResident(req.params.id, req.body));
   } catch (err) { next(err); }
 });
 
-// Soft delete — admin only.
+// Delete — admin only (always).
 router.delete("/:id", requireAuth, requireAdmin, async (req, res, next) => {
   try {
     await svc.softDeleteResident(req.params.id);

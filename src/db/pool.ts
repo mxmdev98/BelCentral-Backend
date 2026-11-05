@@ -9,9 +9,16 @@ if (!connectionString) {
   throw new Error("DATABASE_URL is not set. Copy .env.example to .env.");
 }
 
+// Tell the pg driver to return DATE columns as plain strings ("YYYY-MM-DD")
+// instead of JS Date objects. This avoids timezone shifts and makes the
+// value directly usable in <input type="date">.
+// Must be set BEFORE creating the pool.
+const types = pg.types;
+types.setTypeParser(types.builtins.DATE, (val: string) => val); // return as-is "YYYY-MM-DD"
+types.setTypeParser(types.builtins.TIMESTAMPTZ, (val: string) => val); // return as-is
+
 export const pool = new pg.Pool({
   connectionString,
-  // Default pool size (10) is plenty for a small LLG app.
   max: Number(process.env.DB_POOL_MAX ?? 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
@@ -25,13 +32,10 @@ if (process.env.NODE_ENV !== "production") {
     (client as any).query = function (...args: any[]) {
       const start = Date.now();
       const result = origQuery(...args);
-      // Both callback and promise styles are supported by pg; we only
-      // await the promise form here.
       if (result && typeof result.then === "function") {
         result.then(() => {
           const ms = Date.now() - start;
           if (ms > 500) {
-            // eslint-disable-next-line no-console
             console.log(`[slow query ${ms}ms]`, args[0]);
           }
         });

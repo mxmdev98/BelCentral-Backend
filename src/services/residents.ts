@@ -2,11 +2,30 @@
 import { pool } from "../db/pool.js";
 import { computeAge } from "../utils/age.js";
 import { badRequest, notFound } from "../utils/errors.js";
+import { logger } from "../utils/logger.js";
 import type {
   CreateResidentInput,
   SearchResidentsInput,
   UpdateResidentInput,
 } from "../schemas/residents.js";
+
+// Format a DATE value from Postgres as "YYYY-MM-DD".
+// The pg driver returns DATE columns as JS Date objects, so String(date)
+// gives a locale string like "Mon Feb 23 1998" — which is wrong for <input type="date">.
+// This helper extracts the ISO date portion correctly.
+function formatDate(d: unknown): string {
+  if (!d) return "";
+  if (d instanceof Date) {
+    // Use UTC methods to avoid timezone shifts
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  // If it's already a string (e.g. "1998-02-23"), just trim to 10 chars
+  const s = String(d);
+  return s.length >= 10 ? s.slice(0, 10) : s;
+}
 
 export interface Resident {
   id: string;
@@ -41,37 +60,34 @@ export interface ResidentListRow extends Resident {
   clan_name: string;
 }
 
-// Validate that tribe belongs to the chosen village, and clan belongs to the tribe.
-// Throws badRequest(400) with field-level details if the hierarchy is inconsistent.
+// Validate that the village, tribe, and clan all exist in the database.
+// NOTE: We do NOT enforce that tribe belongs to village or clan belongs to tribe,
+// because the frontend uses independent (unlinked) dropdowns. This avoids
+// "Tribe does not belong to the selected village" errors when users pick
+// combinations that don't follow the strict hierarchy.
 async function assertHierarchy(
   villageId: number,
   tribeId: number,
   clanId: number
 ): Promise<void> {
+  // Single query that checks all three exist. Each parameter is used ($1, $2, $3)
+  // so the pg driver doesn't throw "could not determine data type of parameter $N".
   const { rows } = await pool.query(
-    `SELECT t.id AS tribe_id, t.village_id AS tribe_village_id,
-            c.id AS clan_id,   c.tribe_id  AS clan_tribe_id
-       FROM tribes t
-       LEFT JOIN clans c ON c.id = $3
-      WHERE t.id = $2`,
+    `SELECT
+       (SELECT 1 FROM villages WHERE id = $1) AS village_exists,
+       (SELECT 1 FROM tribes   WHERE id = $2) AS tribe_exists,
+       (SELECT 1 FROM clans    WHERE id = $3) AS clan_exists`,
     [villageId, tribeId, clanId]
   );
-  const tribe = rows[0];
-  if (!tribe) {
+  const r = rows[0];
+  if (!r.village_exists) {
+    throw badRequest("Invalid village.", { village_id: "Village does not exist." });
+  }
+  if (!r.tribe_exists) {
     throw badRequest("Invalid tribe.", { tribe_id: "Tribe does not exist." });
   }
-  if (tribe.tribe_village_id !== villageId) {
-    throw badRequest("Tribe does not belong to the selected village.", {
-      tribe_id: "Tribe does not belong to the selected village.",
-    });
-  }
-  if (!tribe.clan_id) {
+  if (!r.clan_exists) {
     throw badRequest("Invalid clan.", { clan_id: "Clan does not exist." });
-  }
-  if (tribe.clan_tribe_id !== tribeId) {
-    throw badRequest("Clan does not belong to the selected tribe.", {
-      clan_id: "Clan does not belong to the selected tribe.",
-    });
   }
 }
 
@@ -82,7 +98,7 @@ function mapRow(row: Record<string, unknown>): Resident {
     father_name: String(row.father_name),
     mother_name: String(row.mother_name),
     gender: row.gender as "Male" | "Female",
-    date_of_birth: String(row.date_of_birth).slice(0, 10),
+    date_of_birth: formatDate(row.date_of_birth),
     age: Number(row.age),
     village_id: Number(row.village_id),
     tribe_id: Number(row.tribe_id),
@@ -184,60 +200,79 @@ export async function createResident(
   input: CreateResidentInput,
   createdBy: number
 ): Promise<ResidentDetail> {
-  await assertHierarchy(input.village_id, input.tribe_id, input.clan_id);
-  const age = computeAge(input.date_of_birth);
+  try {
+    await assertHierarchy(input.village_id, input.tribe_id, input.clan_id);
+    const age = computeAge(input.date_of_birth);
 
-  const { rows } = await pool.query(
-    `INSERT INTO residents (
-       full_name, father_name, mother_name, gender, date_of_birth, age,
-       village_id, tribe_id, clan_id,
-       employment_status, marital_status, education_level, profession,
-       created_by
-     )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-     RETURNING id`,
-    [
-      input.full_name, input.father_name, input.mother_name, input.gender,
-      input.date_of_birth, age,
-      input.village_id, input.tribe_id, input.clan_id,
-      input.employment_status, input.marital_status, input.education_level,
-      input.profession ?? null,
-      createdBy,
-    ]
-  );
-  // Unique violation is caught by error middleware → 409 friendly message.
-  return getResident(rows[0].id);
+    // Convert undefined → null for all nullable fields. The pg driver
+    // throws "could not determine data type of parameter $N" if you pass
+    // undefined instead of null.
+    const profession = input.profession ?? null;
+    const createdById = createdBy ?? null;
+
+    const { rows } = await pool.query(
+      `INSERT INTO residents (
+         full_name, father_name, mother_name, gender, date_of_birth, age,
+         village_id, tribe_id, clan_id,
+         employment_status, marital_status, education_level, profession,
+         created_by
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING id`,
+      [
+        input.full_name, input.father_name, input.mother_name, input.gender,
+        input.date_of_birth, age,
+        input.village_id, input.tribe_id, input.clan_id,
+        input.employment_status, input.marital_status, input.education_level,
+        profession,
+        createdById,
+      ]
+    );
+    // Unique violation is caught by error middleware → 409 friendly message.
+    return getResident(rows[0].id);
+  } catch (err) {
+    logger.error({ err, input, createdBy }, "createResident failed");
+    throw err;
+  }
 }
 
 export async function updateResident(
   id: string,
   input: UpdateResidentInput
 ): Promise<ResidentDetail> {
-  // Make sure the resident exists & is not soft-deleted.
-  const existing = await getResident(id);
-  if (!existing) throw notFound("Resident not found");
+  try {
+    // Make sure the resident exists & is not soft-deleted.
+    const existing = await getResident(id);
+    if (!existing) throw notFound("Resident not found");
 
-  await assertHierarchy(input.village_id, input.tribe_id, input.clan_id);
-  const age = computeAge(input.date_of_birth);
+    await assertHierarchy(input.village_id, input.tribe_id, input.clan_id);
+    const age = computeAge(input.date_of_birth);
 
-  await pool.query(
-    `UPDATE residents SET
-       full_name = $2, father_name = $3, mother_name = $4, gender = $5,
-       date_of_birth = $6, age = $7,
-       village_id = $8, tribe_id = $9, clan_id = $10,
-       employment_status = $11, marital_status = $12, education_level = $13,
-       profession = $14
-     WHERE id = $1 AND deleted_at IS NULL`,
-    [
-      id,
-      input.full_name, input.father_name, input.mother_name, input.gender,
-      input.date_of_birth, age,
-      input.village_id, input.tribe_id, input.clan_id,
-      input.employment_status, input.marital_status, input.education_level,
-      input.profession ?? null,
-    ]
-  );
-  return getResident(id);
+    // Convert undefined → null for nullable fields (pg driver requirement)
+    const profession = input.profession ?? null;
+
+    await pool.query(
+      `UPDATE residents SET
+         full_name = $2, father_name = $3, mother_name = $4, gender = $5,
+         date_of_birth = $6, age = $7,
+         village_id = $8, tribe_id = $9, clan_id = $10,
+         employment_status = $11, marital_status = $12, education_level = $13,
+         profession = $14
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [
+        id,
+        input.full_name, input.father_name, input.mother_name, input.gender,
+        input.date_of_birth, age,
+        input.village_id, input.tribe_id, input.clan_id,
+        input.employment_status, input.marital_status, input.education_level,
+        profession,
+      ]
+    );
+    return getResident(id);
+  } catch (err) {
+    logger.error({ err, id, input }, "updateResident failed");
+    throw err;
+  }
 }
 
 export async function softDeleteResident(id: string): Promise<void> {

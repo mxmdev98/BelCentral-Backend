@@ -40,7 +40,20 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     });
   }
 
-  // Fallback
+  // Postgres check-violation (23514) → 400 friendly (e.g. age out of range, bad enum)
+  if (err && typeof err === "object" && "code" in err && err.code === "23514") {
+    const msg = (err as { message?: string }).message ?? "Check constraint failed";
+    return res.status(400).json({
+      error: `Data validation failed: ${msg}`,
+    });
+  }
+
+  // Fallback — log the full error and return a detailed message in dev
   logger.error({ err }, "Unhandled error");
-  return res.status(500).json({ error: "Internal server error" });
+  const message = err instanceof Error ? err.message : "Internal server error";
+  const stack = err instanceof Error ? err.stack : undefined;
+  return res.status(500).json({
+    error: process.env.NODE_ENV === "production" ? "Internal server error" : message,
+    ...(process.env.NODE_ENV !== "production" && { stack }),
+  });
 };

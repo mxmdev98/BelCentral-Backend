@@ -17,6 +17,9 @@ import tribesRoutes from "./routes/tribes.js";
 import clansRoutes from "./routes/clans.js";
 import residentsRoutes from "./routes/residents.js";
 import reportsRoutes from "./routes/reports.js";
+import wardOfficialsRoutes from "./routes/wardOfficials.js";
+import usersRoutes from "./routes/users.js";
+import permissionsRoutes from "./routes/permissions.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
@@ -35,7 +38,12 @@ app.use(
 );
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
-app.use(pinoHttp({ logger }));
+// pino-http's default export is a factory function: call it with { logger }
+// to get the actual Express middleware. The `as unknown as` cast is needed
+// because pino-http's TypeScript types don't always play nicely with
+// esModuleInterop + strict mode.
+const httpLogger = (pinoHttp as unknown as (opts: { logger: typeof logger }) => express.RequestHandler)({ logger });
+app.use(httpLogger);
 
 // Health check — no auth, useful for Nginx/uptime monitors.
 app.get("/api/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
@@ -46,6 +54,9 @@ app.use("/api/tribes", tribesRoutes);
 app.use("/api/clans", clansRoutes);
 app.use("/api/residents", residentsRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/ward-officials", wardOfficialsRoutes);
+app.use("/api/users", usersRoutes);
+app.use("/api/permissions", permissionsRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
