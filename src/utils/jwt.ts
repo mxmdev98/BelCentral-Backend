@@ -8,14 +8,16 @@ export interface AuthUser {
   role: "official" | "admin";
 }
 
-const SECRET = process.env.JWT_SECRET;
+const SECRET_RAW = process.env.JWT_SECRET;
 const EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "12h";
 const COOKIE_NAME = process.env.COOKIE_NAME ?? "rb_token";
 const SECURE = process.env.SECURE_COOKIES === "true";
 
-if (!SECRET) {
+if (!SECRET_RAW) {
   throw new Error("JWT_SECRET is not set. Copy .env.example to .env.");
 }
+
+const SECRET: string = SECRET_RAW;  // ← now typed as string, not string | undefined
 
 export function signToken(user: AuthUser): string {
   return jwt.sign(user, SECRET, { expiresIn: EXPIRES_IN } as jwt.SignOptions);
