@@ -38,12 +38,9 @@ app.use(
 );
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
-// pino-http's default export is a factory function: call it with { logger }
-// to get the actual Express middleware. The `as unknown as` cast is needed
-// because pino-http's TypeScript types don't always play nicely with
-// esModuleInterop + strict mode.
 const httpLogger = (pinoHttp as unknown as (opts: { logger: typeof logger }) => express.RequestHandler)({ logger });
 app.use(httpLogger);
+//app.use(pinoHttp({ logger }));
 
 // Health check — no auth, useful for Nginx/uptime monitors.
 app.get("/api/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
