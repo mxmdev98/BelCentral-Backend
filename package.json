@@ -1,7 +1,6 @@
 {
   "name": "record-book-backend",
   "version": "1.0.0",
-  "type": "module",  
   "description": "Bel Central LLG Record Book — backend API (Express + TypeScript + pg)",
   "main": "dist/index.js",
   "scripts": {

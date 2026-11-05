@@ -9,7 +9,7 @@ export function validate(schema: ZodSchema, source: "body" | "query" | "params" 
       return next(result.error);
     }
     // Replace with the parsed (and coerced/trimmed) value.
-    (req as unknown as Record<string, unknown>)[source] = result.data;
+    (req as Record<string, unknown>)[source] = result.data;
     next();
   };
 }
